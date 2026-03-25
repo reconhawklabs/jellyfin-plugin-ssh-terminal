@@ -75,9 +75,11 @@
         <script>
             var SshTerminal = {
                 term: null,
-                ws: null,
                 fitAddon: null,
-                loaded: false,
+                sessionId: null,
+                eventSource: null,
+                inputBuffer: '',
+                inputTimer: null,
 
                 setStatus: function (connected, text) {
                     var dot = document.getElementById('statusDot');
@@ -87,33 +89,44 @@
                 },
 
                 getAccessToken: function () {
-                    // Try ApiClient first (available when loaded inside Jellyfin SPA)
                     if (typeof ApiClient !== 'undefined' && ApiClient.accessToken) {
                         var token = ApiClient.accessToken();
                         if (token) return token;
                     }
-                    // Fallback: read from localStorage where Jellyfin stores credentials
                     try {
                         var creds = JSON.parse(localStorage.getItem('jellyfin_credentials'));
                         if (creds && creds.Servers && creds.Servers.length > 0) {
                             return creds.Servers[0].AccessToken;
                         }
                     } catch (e) {
-                        console.error('Failed to read Jellyfin credentials from localStorage', e);
+                        console.error('Failed to read credentials', e);
                     }
                     return null;
                 },
 
-                getWebSocketUrl: function () {
+                getBaseUrl: function () {
                     var loc = window.location;
-                    var proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
-                    var basePath = loc.pathname.substring(0, loc.pathname.indexOf('/web/') + 1);
-                    var apiKey = this.getAccessToken();
-                    if (!apiKey) {
-                        this.setStatus(false, 'No auth token found');
-                        return null;
+                    var idx = loc.pathname.indexOf('/web/');
+                    if (idx >= 0) {
+                        return loc.protocol + '//' + loc.host + loc.pathname.substring(0, idx);
                     }
-                    return proto + '//' + loc.host + basePath + 'SshTerminal/Socket?api_key=' + encodeURIComponent(apiKey);
+                    return loc.protocol + '//' + loc.host;
+                },
+
+                apiRequest: function (method, path, body) {
+                    var token = this.getAccessToken();
+                    var url = this.getBaseUrl() + path;
+                    var opts = {
+                        method: method,
+                        headers: {
+                            'Authorization': 'MediaBrowser Token="' + token + '"'
+                        }
+                    };
+                    if (body !== undefined) {
+                        opts.headers['Content-Type'] = 'application/json';
+                        opts.body = JSON.stringify(body);
+                    }
+                    return fetch(url, opts);
                 },
 
                 loadXtermCss: function () {
@@ -128,13 +141,13 @@
                     });
                 },
 
-                loadScript: function (url) {
+                loadScript: function (src) {
                     return new Promise(function (resolve, reject) {
-                        var script = document.createElement('script');
-                        script.src = url;
-                        script.onload = resolve;
-                        script.onerror = reject;
-                        document.head.appendChild(script);
+                        var s = document.createElement('script');
+                        s.src = src;
+                        s.onload = resolve;
+                        s.onerror = reject;
+                        document.head.appendChild(s);
                     });
                 },
 
@@ -149,18 +162,47 @@
                         });
                 },
 
+                flushInput: function () {
+                    var self = this;
+                    if (!self.inputBuffer || !self.sessionId) return;
+
+                    var data = self.inputBuffer;
+                    self.inputBuffer = '';
+
+                    var encoder = new TextEncoder();
+                    var bytes = encoder.encode(data);
+                    var base64 = btoa(String.fromCharCode.apply(null, bytes));
+
+                    self.apiRequest('POST', '/SshTerminal/Input', {
+                        sessionId: self.sessionId,
+                        data: base64
+                    }).catch(function (err) {
+                        console.error('Input send failed', err);
+                    });
+                },
+
+                sendInput: function (data) {
+                    var self = this;
+                    self.inputBuffer += data;
+                    if (self.inputTimer) clearTimeout(self.inputTimer);
+                    // Flush immediately for single chars (interactive), batch for pastes
+                    if (self.inputBuffer.length <= 2) {
+                        self.flushInput();
+                    } else {
+                        self.inputTimer = setTimeout(function () { self.flushInput(); }, 10);
+                    }
+                },
+
                 connect: function () {
                     var self = this;
 
-                    var url = self.getWebSocketUrl();
-                    if (!url) return;
+                    var token = self.getAccessToken();
+                    if (!token) {
+                        self.setStatus(false, 'No auth token');
+                        return;
+                    }
 
-                    if (self.ws && self.ws.readyState <= 1) {
-                        self.ws.close();
-                    }
-                    if (self.term) {
-                        self.term.dispose();
-                    }
+                    self.disconnect();
 
                     self.loadDeps().then(function () {
                         self.term = new Terminal({
@@ -188,63 +230,81 @@
                         self.term.write('Connecting to SSH...\r\n');
                         self.setStatus(false, 'Connecting...');
 
-                        self.ws = new WebSocket(url);
-                        self.ws.binaryType = 'arraybuffer';
-
-                        self.ws.onopen = function () {
+                        // Create SSH session via POST
+                        self.apiRequest('POST', '/SshTerminal/Connect').then(function (resp) {
+                            if (!resp.ok) {
+                                return resp.json().then(function (err) {
+                                    throw new Error(err.error || 'Connection failed');
+                                });
+                            }
+                            return resp.json();
+                        }).then(function (result) {
+                            self.sessionId = result.sessionId;
                             self.setStatus(true, 'Connected');
                             self.term.clear();
+
+                            // Send initial size
                             var dims = self.fitAddon.proposeDimensions();
                             if (dims) {
-                                self.ws.send(JSON.stringify({
-                                    type: 'resize',
+                                self.apiRequest('POST', '/SshTerminal/Resize', {
+                                    sessionId: self.sessionId,
                                     cols: dims.cols,
                                     rows: dims.rows
-                                }));
+                                });
                             }
-                        };
 
-                        self.ws.onmessage = function (event) {
-                            if (event.data instanceof ArrayBuffer) {
-                                self.term.write(new Uint8Array(event.data));
-                            } else {
-                                self.term.write(event.data);
-                            }
-                        };
+                            // Start SSE stream for output
+                            var streamUrl = self.getBaseUrl()
+                                + '/SshTerminal/Stream?sessionId='
+                                + encodeURIComponent(self.sessionId)
+                                + '&api_key=' + encodeURIComponent(token);
 
-                        self.ws.onclose = function (event) {
-                            self.setStatus(false, 'Disconnected (code: ' + event.code + ')');
-                            self.term.write('\r\n\r\n[Connection closed]\r\n');
-                        };
+                            self.eventSource = new EventSource(streamUrl);
 
-                        self.ws.onerror = function () {
-                            self.setStatus(false, 'Connection error');
-                        };
-
-                        self.term.onData(function (data) {
-                            if (self.ws && self.ws.readyState === WebSocket.OPEN) {
-                                var encoder = new TextEncoder();
-                                self.ws.send(encoder.encode(data));
-                            }
-                        });
-
-                        self.term.onBinary(function (data) {
-                            if (self.ws && self.ws.readyState === WebSocket.OPEN) {
-                                var buffer = new Uint8Array(data.length);
-                                for (var i = 0; i < data.length; i++) {
-                                    buffer[i] = data.charCodeAt(i) & 0xff;
+                            self.eventSource.onmessage = function (event) {
+                                // Decode base64 output
+                                var binary = atob(event.data);
+                                var bytes = new Uint8Array(binary.length);
+                                for (var i = 0; i < binary.length; i++) {
+                                    bytes[i] = binary.charCodeAt(i);
                                 }
-                                self.ws.send(buffer);
+                                self.term.write(bytes);
+                            };
+
+                            self.eventSource.addEventListener('disconnected', function () {
+                                self.setStatus(false, 'SSH disconnected');
+                                self.term.write('\r\n[Connection closed]\r\n');
+                                self.cleanup();
+                            });
+
+                            self.eventSource.addEventListener('error', function (e) {
+                                if (self.eventSource && self.eventSource.readyState === EventSource.CLOSED) {
+                                    self.setStatus(false, 'Stream closed');
+                                    self.term.write('\r\n[Connection closed]\r\n');
+                                    self.cleanup();
+                                }
+                            });
+
+                        }).catch(function (err) {
+                            self.setStatus(false, 'Connection failed');
+                            self.term.write('\r\n[Error: ' + err.message + ']\r\n');
+                        });
+
+                        // Send keystrokes via POST
+                        self.term.onData(function (data) {
+                            if (self.sessionId) {
+                                self.sendInput(data);
                             }
                         });
 
+                        // Handle resize
                         self.term.onResize(function (size) {
-                            if (self.ws && self.ws.readyState === WebSocket.OPEN) {
-                                self.ws.send(JSON.stringify({
-                                    type: 'resize',
+                            if (self.sessionId) {
+                                self.apiRequest('POST', '/SshTerminal/Resize', {
+                                    sessionId: self.sessionId,
                                     cols: size.cols,
                                     rows: size.rows
-                                }));
+                                });
                             }
                         });
 
@@ -256,15 +316,31 @@
                     });
                 },
 
+                cleanup: function () {
+                    if (this.eventSource) {
+                        this.eventSource.close();
+                        this.eventSource = null;
+                    }
+                    this.sessionId = null;
+                },
+
                 reconnect: function () {
                     this.connect();
                 },
 
                 disconnect: function () {
-                    if (this.ws) {
-                        this.ws.close();
+                    var self = this;
+                    if (self.sessionId) {
+                        self.apiRequest('POST', '/SshTerminal/Disconnect', {
+                            sessionId: self.sessionId
+                        }).catch(function () {});
                     }
-                    this.setStatus(false);
+                    self.cleanup();
+                    if (self.term) {
+                        self.term.dispose();
+                        self.term = null;
+                    }
+                    self.setStatus(false);
                 },
 
                 init: function () {
@@ -278,17 +354,14 @@
                 }
             };
 
-            // Auto-connect when the page is shown
             document.addEventListener('viewshow', function () {
                 SshTerminal.init();
             });
 
-            // Fallback: also try on pageshow and DOMContentLoaded
             document.addEventListener('pageshow', function () {
                 SshTerminal.init();
             });
 
-            // If page is already loaded (direct navigation), start immediately
             if (document.readyState === 'complete' || document.readyState === 'interactive') {
                 SshTerminal.init();
             }
