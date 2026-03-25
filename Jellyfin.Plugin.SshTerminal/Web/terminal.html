@@ -86,11 +86,33 @@
                     if (label) label.textContent = text || (connected ? 'Connected' : 'Disconnected');
                 },
 
+                getAccessToken: function () {
+                    // Try ApiClient first (available when loaded inside Jellyfin SPA)
+                    if (typeof ApiClient !== 'undefined' && ApiClient.accessToken) {
+                        var token = ApiClient.accessToken();
+                        if (token) return token;
+                    }
+                    // Fallback: read from localStorage where Jellyfin stores credentials
+                    try {
+                        var creds = JSON.parse(localStorage.getItem('jellyfin_credentials'));
+                        if (creds && creds.Servers && creds.Servers.length > 0) {
+                            return creds.Servers[0].AccessToken;
+                        }
+                    } catch (e) {
+                        console.error('Failed to read Jellyfin credentials from localStorage', e);
+                    }
+                    return null;
+                },
+
                 getWebSocketUrl: function () {
                     var loc = window.location;
                     var proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
                     var basePath = loc.pathname.substring(0, loc.pathname.indexOf('/web/') + 1);
-                    var apiKey = ApiClient.accessToken();
+                    var apiKey = this.getAccessToken();
+                    if (!apiKey) {
+                        this.setStatus(false, 'No auth token found');
+                        return null;
+                    }
                     return proto + '//' + loc.host + basePath + 'SshTerminal/Socket?api_key=' + encodeURIComponent(apiKey);
                 },
 
@@ -130,6 +152,9 @@
                 connect: function () {
                     var self = this;
 
+                    var url = self.getWebSocketUrl();
+                    if (!url) return;
+
                     if (self.ws && self.ws.readyState <= 1) {
                         self.ws.close();
                     }
@@ -163,7 +188,6 @@
                         self.term.write('Connecting to SSH...\r\n');
                         self.setStatus(false, 'Connecting...');
 
-                        var url = self.getWebSocketUrl();
                         self.ws = new WebSocket(url);
                         self.ws.binaryType = 'arraybuffer';
 
@@ -244,7 +268,8 @@
                 },
 
                 init: function () {
-                    if (typeof ApiClient !== 'undefined' && ApiClient.accessToken()) {
+                    var token = this.getAccessToken();
+                    if (token) {
                         this.connect();
                     } else {
                         var self = this;
@@ -253,9 +278,20 @@
                 }
             };
 
+            // Auto-connect when the page is shown
             document.addEventListener('viewshow', function () {
                 SshTerminal.init();
             });
+
+            // Fallback: also try on pageshow and DOMContentLoaded
+            document.addEventListener('pageshow', function () {
+                SshTerminal.init();
+            });
+
+            // If page is already loaded (direct navigation), start immediately
+            if (document.readyState === 'complete' || document.readyState === 'interactive') {
+                SshTerminal.init();
+            }
         </script>
     </div>
 </body>
