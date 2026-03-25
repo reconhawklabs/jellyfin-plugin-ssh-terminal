@@ -1,0 +1,20 @@
+[
+  {
+    "guid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "SSH Terminal",
+    "description": "Web-based SSH terminal access through Jellyfin. Connect to machines on your local network via an xterm.js terminal in the browser, proxied through Jellyfin's WebSocket API.",
+    "overview": "SSH terminal in your Jellyfin web UI",
+    "owner": "reconhawklabs",
+    "category": "General",
+    "versions": [
+      {
+        "version": "1.0.0.0",
+        "changelog": "Initial release — password and private key auth, xterm.js terminal, WebSocket-to-SSH bridge",
+        "targetAbi": "10.10.0.0",
+        "sourceUrl": "https://github.com/reconhawklabs/jellyfin-plugin-ssh-terminal/releases/download/v1.0.0/jellyfin-plugin-ssh-terminal_1.0.0.0.zip",
+        "checksum": "a2d03d73d56cc623ec485fb06374d77e",
+        "timestamp": "2026-03-24T00:00:00Z"
+      }
+    ]
+  }
+]

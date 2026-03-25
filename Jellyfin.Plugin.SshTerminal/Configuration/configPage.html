@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SSH Terminal</title>
+</head>
+<body>
+    <div id="SshTerminalConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
+         data-require="emby-input,emby-button,emby-select">
+
+        <div data-role="content">
+            <div class="content-primary">
+                <h2>SSH Terminal Settings</h2>
+                <p>Configure the SSH target host for remote terminal access.</p>
+
+                <div class="inputContainer">
+                    <label class="inputLabel" for="txtSshHost">SSH Host</label>
+                    <input is="emby-input" type="text" id="txtSshHost" placeholder="192.168.1.100" />
+                    <div class="fieldDescription">IP address or hostname of the SSH target.</div>
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel" for="txtSshPort">SSH Port</label>
+                    <input is="emby-input" type="number" id="txtSshPort" placeholder="22" />
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel" for="txtSshUsername">Username</label>
+                    <input is="emby-input" type="text" id="txtSshUsername" />
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel" for="selAuthMethod">Authentication Method</label>
+                    <select is="emby-select" id="selAuthMethod">
+                        <option value="password">Password</option>
+                        <option value="privatekey">Private Key</option>
+                    </select>
+                </div>
+
+                <div class="inputContainer" id="passwordContainer">
+                    <label class="inputLabel" for="txtSshPassword">Password</label>
+                    <input is="emby-input" type="password" id="txtSshPassword" />
+                </div>
+
+                <div class="inputContainer" id="privateKeyContainer" style="display:none;">
+                    <label class="inputLabel" for="txtSshPrivateKey">Private Key (PEM format)</label>
+                    <textarea id="txtSshPrivateKey" rows="6" style="width:100%; font-family:monospace; background:var(--theme-background); color:var(--theme-text-color); border:1px solid var(--theme-border-color); padding:8px;"></textarea>
+                    <div class="fieldDescription">Paste your private key in PEM format (-----BEGIN ... -----)</div>
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel" for="txtTerminalType">Terminal Type</label>
+                    <input is="emby-input" type="text" id="txtTerminalType" placeholder="xterm-256color" />
+                </div>
+
+                <div>
+                    <button is="emby-button" type="button" class="raised button-submit block"
+                            onclick="SshTerminalConfig.save();">
+                        <span>Save</span>
+                    </button>
+                </div>
+
+                <div style="margin-top:20px;">
+                    <a is="emby-button" class="raised" href="web/ConfigurationPage?name=SshTerminal"
+                       style="text-decoration:none;">
+                        <span>Open SSH Terminal</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            var SshTerminalConfig = {
+                pluginUniqueId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+
+                load: function () {
+                    Dashboard.showLoadingMsg();
+                    ApiClient.getPluginConfiguration(this.pluginUniqueId).then(function (config) {
+                        document.getElementById('txtSshHost').value = config.SshHost || '';
+                        document.getElementById('txtSshPort').value = config.SshPort || 22;
+                        document.getElementById('txtSshUsername').value = config.SshUsername || '';
+                        document.getElementById('selAuthMethod').value = config.AuthMethod || 'password';
+                        document.getElementById('txtSshPassword').value = config.SshPassword || '';
+                        document.getElementById('txtSshPrivateKey').value = config.SshPrivateKey || '';
+                        document.getElementById('txtTerminalType').value = config.TerminalType || 'xterm-256color';
+                        SshTerminalConfig.toggleAuthFields();
+                        Dashboard.hideLoadingMsg();
+                    });
+                },
+
+                toggleAuthFields: function () {
+                    var method = document.getElementById('selAuthMethod').value;
+                    document.getElementById('passwordContainer').style.display = method === 'password' ? '' : 'none';
+                    document.getElementById('privateKeyContainer').style.display = method === 'privatekey' ? '' : 'none';
+                },
+
+                save: function () {
+                    Dashboard.showLoadingMsg();
+                    ApiClient.getPluginConfiguration(this.pluginUniqueId).then(function (config) {
+                        config.SshHost = document.getElementById('txtSshHost').value;
+                        config.SshPort = parseInt(document.getElementById('txtSshPort').value) || 22;
+                        config.SshUsername = document.getElementById('txtSshUsername').value;
+                        config.AuthMethod = document.getElementById('selAuthMethod').value;
+                        config.SshPassword = document.getElementById('txtSshPassword').value;
+                        config.SshPrivateKey = document.getElementById('txtSshPrivateKey').value;
+                        config.TerminalType = document.getElementById('txtTerminalType').value || 'xterm-256color';
+                        ApiClient.updatePluginConfiguration(SshTerminalConfig.pluginUniqueId, config).then(function () {
+                            Dashboard.processPluginConfigurationUpdateResult();
+                            Dashboard.hideLoadingMsg();
+                        });
+                    });
+                }
+            };
+
+            document.getElementById('selAuthMethod').addEventListener('change', function () {
+                SshTerminalConfig.toggleAuthFields();
+            });
+
+            document.addEventListener('viewshow', function () {
+                SshTerminalConfig.load();
+            });
+        </script>
+    </div>
+</body>
+</html>
