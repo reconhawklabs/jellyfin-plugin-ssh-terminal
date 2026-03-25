@@ -2,227 +2,261 @@
 <html>
 <head>
     <title>SSH Terminal</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
-    <style>
-        #terminal-page {
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-            background: #1e1e1e;
-        }
-        #terminal-bar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 8px 16px;
-            background: #2d2d2d;
-            color: #ccc;
-            font-family: sans-serif;
-            font-size: 14px;
-        }
-        #terminal-bar .status {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        #terminal-bar .dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: #f44;
-        }
-        #terminal-bar .dot.connected {
-            background: #4c4;
-        }
-        #terminal-bar button {
-            background: #444;
-            color: #ccc;
-            border: 1px solid #555;
-            padding: 4px 12px;
-            cursor: pointer;
-            border-radius: 3px;
-            font-size: 13px;
-        }
-        #terminal-bar button:hover {
-            background: #555;
-        }
-        #terminal-container {
-            flex: 1;
-            padding: 4px;
-        }
-    </style>
 </head>
 <body>
-    <div id="terminal-page">
-        <div id="terminal-bar">
-            <div class="status">
-                <span class="dot" id="statusDot"></span>
-                <span id="statusText">Disconnected</span>
-            </div>
-            <div>
-                <button onclick="reconnect()">Reconnect</button>
-                <button onclick="disconnect()">Disconnect</button>
+    <div id="SshTerminalPage" data-role="page" class="page type-interior pluginConfigurationPage">
+
+        <div data-role="content">
+            <div class="content-primary">
+
+                <style>
+                    #terminal-bar {
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                        padding: 8px 12px;
+                        background: #2d2d2d;
+                        color: #ccc;
+                        font-family: sans-serif;
+                        font-size: 14px;
+                        border-radius: 4px 4px 0 0;
+                    }
+                    #terminal-bar .status {
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                    }
+                    #terminal-bar .dot {
+                        width: 10px;
+                        height: 10px;
+                        border-radius: 50%;
+                        background: #f44;
+                    }
+                    #terminal-bar .dot.connected {
+                        background: #4c4;
+                    }
+                    #terminal-bar button {
+                        background: #444;
+                        color: #ccc;
+                        border: 1px solid #555;
+                        padding: 4px 12px;
+                        cursor: pointer;
+                        border-radius: 3px;
+                        font-size: 13px;
+                        margin-left: 8px;
+                    }
+                    #terminal-bar button:hover {
+                        background: #555;
+                    }
+                    #terminal-container {
+                        height: 70vh;
+                        background: #1e1e1e;
+                        border-radius: 0 0 4px 4px;
+                    }
+                </style>
+
+                <h2>SSH Terminal</h2>
+
+                <div id="terminal-bar">
+                    <div class="status">
+                        <span class="dot" id="statusDot"></span>
+                        <span id="statusText">Disconnected</span>
+                    </div>
+                    <div>
+                        <button onclick="SshTerminal.reconnect()">Reconnect</button>
+                        <button onclick="SshTerminal.disconnect()">Disconnect</button>
+                    </div>
+                </div>
+                <div id="terminal-container"></div>
+
             </div>
         </div>
-        <div id="terminal-container"></div>
-    </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+        <script>
+            var SshTerminal = {
+                term: null,
+                ws: null,
+                fitAddon: null,
+                loaded: false,
 
-    <script>
-        var term = null;
-        var ws = null;
-        var fitAddon = null;
-
-        function setStatus(connected, text) {
-            var dot = document.getElementById('statusDot');
-            var label = document.getElementById('statusText');
-            dot.className = connected ? 'dot connected' : 'dot';
-            label.textContent = text || (connected ? 'Connected' : 'Disconnected');
-        }
-
-        function getWebSocketUrl() {
-            var loc = window.location;
-            var proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
-            var basePath = loc.pathname.substring(0, loc.pathname.indexOf('/web/') + 1);
-            var apiKey = ApiClient.accessToken();
-            return proto + '//' + loc.host + basePath + 'SshTerminal/Socket?api_key=' + encodeURIComponent(apiKey);
-        }
-
-        function connect() {
-            if (ws && ws.readyState <= 1) {
-                ws.close();
-            }
-
-            if (term) {
-                term.dispose();
-            }
-
-            term = new Terminal({
-                cursorBlink: true,
-                fontSize: 14,
-                fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
-                theme: {
-                    background: '#1e1e1e',
-                    foreground: '#d4d4d4',
-                    cursor: '#d4d4d4'
+                setStatus: function (connected, text) {
+                    var dot = document.getElementById('statusDot');
+                    var label = document.getElementById('statusText');
+                    if (dot) dot.className = connected ? 'dot connected' : 'dot';
+                    if (label) label.textContent = text || (connected ? 'Connected' : 'Disconnected');
                 },
-                allowProposedApi: true
-            });
 
-            fitAddon = new FitAddon.FitAddon();
-            term.loadAddon(fitAddon);
+                getWebSocketUrl: function () {
+                    var loc = window.location;
+                    var proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+                    var basePath = loc.pathname.substring(0, loc.pathname.indexOf('/web/') + 1);
+                    var apiKey = ApiClient.accessToken();
+                    return proto + '//' + loc.host + basePath + 'SshTerminal/Socket?api_key=' + encodeURIComponent(apiKey);
+                },
 
-            var container = document.getElementById('terminal-container');
-            while (container.firstChild) {
-                container.removeChild(container.firstChild);
-            }
-            term.open(container);
-            fitAddon.fit();
+                loadXtermCss: function () {
+                    if (document.getElementById('xterm-css')) return Promise.resolve();
+                    return new Promise(function (resolve) {
+                        var link = document.createElement('link');
+                        link.id = 'xterm-css';
+                        link.rel = 'stylesheet';
+                        link.href = 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css';
+                        link.onload = resolve;
+                        document.head.appendChild(link);
+                    });
+                },
 
-            term.write('Connecting to SSH...\r\n');
-            setStatus(false, 'Connecting...');
+                loadScript: function (url) {
+                    return new Promise(function (resolve, reject) {
+                        var script = document.createElement('script');
+                        script.src = url;
+                        script.onload = resolve;
+                        script.onerror = reject;
+                        document.head.appendChild(script);
+                    });
+                },
 
-            var url = getWebSocketUrl();
-            ws = new WebSocket(url);
-            ws.binaryType = 'arraybuffer';
+                loadDeps: function () {
+                    if (typeof Terminal !== 'undefined') return Promise.resolve();
+                    return this.loadXtermCss()
+                        .then(function () {
+                            return SshTerminal.loadScript('https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js');
+                        })
+                        .then(function () {
+                            return SshTerminal.loadScript('https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js');
+                        });
+                },
 
-            ws.onopen = function () {
-                setStatus(true, 'Connected');
-                term.clear();
+                connect: function () {
+                    var self = this;
 
-                var dims = fitAddon.proposeDimensions();
-                if (dims) {
-                    ws.send(JSON.stringify({
-                        type: 'resize',
-                        cols: dims.cols,
-                        rows: dims.rows
-                    }));
-                }
-            };
-
-            ws.onmessage = function (event) {
-                if (event.data instanceof ArrayBuffer) {
-                    term.write(new Uint8Array(event.data));
-                } else {
-                    term.write(event.data);
-                }
-            };
-
-            ws.onclose = function (event) {
-                setStatus(false, 'Disconnected (code: ' + event.code + ')');
-                term.write('\r\n\r\n[Connection closed]\r\n');
-            };
-
-            ws.onerror = function () {
-                setStatus(false, 'Connection error');
-            };
-
-            term.onData(function (data) {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    var encoder = new TextEncoder();
-                    ws.send(encoder.encode(data));
-                }
-            });
-
-            term.onBinary(function (data) {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    var buffer = new Uint8Array(data.length);
-                    for (var i = 0; i < data.length; i++) {
-                        buffer[i] = data.charCodeAt(i) & 0xff;
+                    if (self.ws && self.ws.readyState <= 1) {
+                        self.ws.close();
                     }
-                    ws.send(buffer);
+                    if (self.term) {
+                        self.term.dispose();
+                    }
+
+                    self.loadDeps().then(function () {
+                        self.term = new Terminal({
+                            cursorBlink: true,
+                            fontSize: 14,
+                            fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+                            theme: {
+                                background: '#1e1e1e',
+                                foreground: '#d4d4d4',
+                                cursor: '#d4d4d4'
+                            },
+                            allowProposedApi: true
+                        });
+
+                        self.fitAddon = new FitAddon.FitAddon();
+                        self.term.loadAddon(self.fitAddon);
+
+                        var container = document.getElementById('terminal-container');
+                        while (container.firstChild) {
+                            container.removeChild(container.firstChild);
+                        }
+                        self.term.open(container);
+                        self.fitAddon.fit();
+
+                        self.term.write('Connecting to SSH...\r\n');
+                        self.setStatus(false, 'Connecting...');
+
+                        var url = self.getWebSocketUrl();
+                        self.ws = new WebSocket(url);
+                        self.ws.binaryType = 'arraybuffer';
+
+                        self.ws.onopen = function () {
+                            self.setStatus(true, 'Connected');
+                            self.term.clear();
+                            var dims = self.fitAddon.proposeDimensions();
+                            if (dims) {
+                                self.ws.send(JSON.stringify({
+                                    type: 'resize',
+                                    cols: dims.cols,
+                                    rows: dims.rows
+                                }));
+                            }
+                        };
+
+                        self.ws.onmessage = function (event) {
+                            if (event.data instanceof ArrayBuffer) {
+                                self.term.write(new Uint8Array(event.data));
+                            } else {
+                                self.term.write(event.data);
+                            }
+                        };
+
+                        self.ws.onclose = function (event) {
+                            self.setStatus(false, 'Disconnected (code: ' + event.code + ')');
+                            self.term.write('\r\n\r\n[Connection closed]\r\n');
+                        };
+
+                        self.ws.onerror = function () {
+                            self.setStatus(false, 'Connection error');
+                        };
+
+                        self.term.onData(function (data) {
+                            if (self.ws && self.ws.readyState === WebSocket.OPEN) {
+                                var encoder = new TextEncoder();
+                                self.ws.send(encoder.encode(data));
+                            }
+                        });
+
+                        self.term.onBinary(function (data) {
+                            if (self.ws && self.ws.readyState === WebSocket.OPEN) {
+                                var buffer = new Uint8Array(data.length);
+                                for (var i = 0; i < data.length; i++) {
+                                    buffer[i] = data.charCodeAt(i) & 0xff;
+                                }
+                                self.ws.send(buffer);
+                            }
+                        });
+
+                        self.term.onResize(function (size) {
+                            if (self.ws && self.ws.readyState === WebSocket.OPEN) {
+                                self.ws.send(JSON.stringify({
+                                    type: 'resize',
+                                    cols: size.cols,
+                                    rows: size.rows
+                                }));
+                            }
+                        });
+
+                        window.addEventListener('resize', function () {
+                            if (self.fitAddon) {
+                                self.fitAddon.fit();
+                            }
+                        });
+                    });
+                },
+
+                reconnect: function () {
+                    this.connect();
+                },
+
+                disconnect: function () {
+                    if (this.ws) {
+                        this.ws.close();
+                    }
+                    this.setStatus(false);
+                },
+
+                init: function () {
+                    if (typeof ApiClient !== 'undefined' && ApiClient.accessToken()) {
+                        this.connect();
+                    } else {
+                        var self = this;
+                        setTimeout(function () { self.init(); }, 200);
+                    }
                 }
+            };
+
+            document.addEventListener('viewshow', function () {
+                SshTerminal.init();
             });
-
-            term.onResize(function (size) {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({
-                        type: 'resize',
-                        cols: size.cols,
-                        rows: size.rows
-                    }));
-                }
-            });
-
-            window.addEventListener('resize', function () {
-                if (fitAddon) {
-                    fitAddon.fit();
-                }
-            });
-        }
-
-        function reconnect() {
-            connect();
-        }
-
-        function disconnect() {
-            if (ws) {
-                ws.close();
-            }
-            setStatus(false);
-        }
-
-        function waitForApiClient() {
-            if (typeof ApiClient !== 'undefined' && ApiClient.accessToken()) {
-                connect();
-            } else {
-                setTimeout(waitForApiClient, 200);
-            }
-        }
-
-        document.addEventListener('viewshow', function () {
-            waitForApiClient();
-        });
-
-        if (document.readyState === 'complete' || document.readyState === 'interactive') {
-            waitForApiClient();
-        } else {
-            document.addEventListener('DOMContentLoaded', function () {
-                waitForApiClient();
-            });
-        }
-    </script>
+        </script>
+    </div>
 </body>
 </html>
